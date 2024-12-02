@@ -12,9 +12,40 @@ from konlpy.tag import Okt
 STOPWORDS_URL = "https://gist.githubusercontent.com/Nine1ll/3ec361da95ccd39101051ab57f86cf46/raw/a1a451421097fa9a93179cb1f1f0dc392f1f9da9/stopwords.txt"
 FILE_DOWNLOAD_PATH = "Preprocessing/data/stopwords.txt"
 DATA_PATH = "data/crawling/blog-review"
-RESULT_PATH = "Preprocessing/result/"
 
-FAKE_REVIE_PATH = ""
+RESULT_PATH = "Preprocessing/result/"
+RESULT_PATH_ADD = "Preprocessing/result/result_add_words/"
+RESULT_PATH_NOUNS = "Preprocessing/result/result_nouns_test/"
+
+RESTAURANT_NAME_PATH = "data/crawling/gangnamMatzip/gangnamOutput-modify.csv"
+FAKE_REVIEW_PATH = ""
+seoul_districts = {
+    "강남": "gangnam",
+    "강동": "gangdong",
+    "강북": "gangbuk",
+    "강서": "gangseo",
+    "관악": "gwanak",
+    "광진": "gwangjin",
+    "구로": "guro",
+    "금천": "geumcheon",
+    "노원": "nowon",
+    "도봉": "dobong",
+    "동대문": "dongdaemun",
+    "동작": "dongjak",
+    "마포": "mapo",
+    "서대문": "seodaemun",
+    "서초": "seocho",
+    "성동": "seongdong",
+    "성북": "seongbuk",
+    "송파": "songpa",
+    "양천": "yangcheon",
+    "영등포": "yeongdeungpo",
+    "용산": "yongsan",
+    "은평": "eunpyeong",
+    "종로": "jongno",
+    "중랑": "jungnang",
+    "중구": "junggu"
+}
 
 
 class review_preprocessing:
@@ -22,15 +53,16 @@ class review_preprocessing:
     0. 사전 수정 예정 (신조어 추가) - soynlp로 진행 중
     1. 불용어 제외 (불용어 다운로드) - 11/28 (완)
     2. 조사 제외 - 11/29 (완)
-    3. 가게 이름 추출
+    3. 가게 이름 추출 - 준호님이 해결 해주심.
     """
     def __init__(self, filepath="Preprocessing/data/stopwords.txt", github_url=None):
         self.okt = Okt()
         self.stopwords = self.load_stopwords(filepath, github_url)
         self.drop_pos = ["Josa", "Punctuation", "Foreign", "KoreanParticle"]
+        self.district_dict = seoul_districts
     
 
-    def load_stopwords(self, filepath="Preprocessing/data/stopwords.txt", github_url=None):
+    def load_stopwords(self, filepath="Preprocessing/data/stopwords.txt", github_url=STOPWORDS_URL):
         stopwords = []
         if not os.path.exists(filepath):
             if github_url is None:
@@ -59,7 +91,13 @@ class review_preprocessing:
         """
         text = str(text)
         hash_tags = re.findall(r"#\w+", text)  # 해시태그 추출
-        return " ".join(hash_tags) if hash_tags else None 
+        return " ".join(tag[1:] for tag in hash_tags) if hash_tags else None 
+
+
+    def take_res_name(self):
+        fake_review_name = pd.read_csv(RESTAURANT_NAME_PATH)
+        # print(fake_review_name.head(5))
+        return fake_review_name["name"].to_list()
 
     def extract_res_name(self, title):
         """
@@ -97,6 +135,15 @@ class review_preprocessing:
         
         return " ".join(words)
 
+    def preprocessing_test(self, text, norm=False, stem=False):
+        text = str(text)
+        text = self.regex(text)
+        words = self.okt.nouns(text,norm=norm, stem=stem)
+        words = [word for word, pos in words if pos not in self.drop_pos]
+        words = [self.regex(word) for word in words if self.regex(word).strip()]
+
+        return " ".join(words)
+
     
     def regex(self, text):
         """
@@ -116,42 +163,70 @@ class review_preprocessing:
         
         return cleaned_text
     
+    def convert_district_name(self, file_name):
+        for kor, eng in self.district_dict.items():
+            if kor in file_name:
+                return file_name.replace(kor, eng)
+        return file_name  # 변환이 필요 없는 경우 원본 파일 이름 반환
+
     def start(self):
         blog_reviews, reuslt_file_names = self.data_raed()
         for index, blog_review in enumerate(blog_reviews):
             start_time = time.time()
-            df = pd.read_csv(blog_review)
-            # df['store_name'] = df['Title'].apply(self.extract_res_name)
-            df['hash_tag'] = df['Content'].apply(self.extract_hash_tags)
-            df['title_pos'] = df['Title'].apply(lambda x: self.preprocessing(x, norm=True, stem=True))
-            df['content_pos'] = df['Content'].apply(lambda x: self.preprocessing(x, norm=True, stem=True))
-            # 단어 중복 제거하면 안됌.
-            df = df[['title_pos','content_pos','hash_tag']]
-            df.to_csv(RESULT_PATH+reuslt_file_names[index]+".csv")
+            print()
+            print(blog_review)
+            if "naver" in blog_review:
+                # 인코딩 에러나서 일단 보류
+                pass
+            else:
+                df = pd.read_csv(blog_review, encoding='utf-8-sig')
+                df.dropna(inplace=True)
+                if "가게 이름" in df.columns:
+                    df.columns = ['Title', 'Content']
+                # df['store_name'] = df['Title'].apply(self.extract_res_name)
+                df['hash_tag'] = df['Content'].apply(self.extract_hash_tags)
+                df['title_pos'] = df['Title'].apply(lambda x: self.preprocessing(x, norm=True, stem=True))
+                df['content_pos'] = df['Content'].apply(lambda x: self.preprocessing(x, norm=True, stem=True))
+                # 단어 중복 제거하면 안됌.
+                df = df[['title_pos','content_pos','hash_tag']]
+                reuslt_file_names[index] = self.convert_district_name(reuslt_file_names[index], district_dict=seoul_districts)
+                df.to_csv(RESULT_PATH_ADD+reuslt_file_names[index]+".csv")
             end_time = time.time()
             print(f"{reuslt_file_names[index]} 경과 시간: {(end_time - start_time):.2f} 초")
 
+    def add_word_test(self):
+        # self.okt.add_dictionary('테스트단어', 'Noun')
+        print(self.okt.nouns('문래동술집'))
+    
+    def start_test(self):
+        blog_reviews, reuslt_file_names = self.data_raed()
+        for index, blog_review in enumerate(blog_reviews):
+            start_time = time.time()
+            print()
+            print(blog_review)
+            if "naver" in blog_review:
+                # 인코딩 에러나서 일단 보류
+                pass
+            else:
+                df = pd.read_csv(blog_review, encoding='utf-8-sig')
+                df.dropna(inplace=True)
+                if "가게 이름" in df.columns:
+                    df.columns = ['Title', 'Content']
+                # df['store_name'] = df['Title'].apply(self.extract_res_name)
+                df['hash_tag'] = df['Content'].apply(self.extract_hash_tags)
+                df['title_pos'] = df['Title'].apply(lambda x: self.preprocessing(x, norm=True, stem=True))
+                df['content_pos'] = df['Content'].apply(lambda x: self.preprocessing(x, norm=True, stem=True))
+                # 단어 중복 제거하면 안됌.
+                df = df[['title_pos','content_pos','hash_tag']]
+                reuslt_file_names[index] = self.convert_district_name(reuslt_file_names[index])
+                df.to_csv(RESULT_PATH_NOUNS+reuslt_file_names[index]+".csv")
+            end_time = time.time()
+            print(f"{reuslt_file_names[index]} 경과 시간: {(end_time - start_time):.2f} 초")
+
+
 if __name__ == "__main__":
     rp = review_preprocessing(filepath=FILE_DOWNLOAD_PATH, github_url=STOPWORDS_URL)
-    rp.start()
+    rp.start_test()
+    # print(rp.take_res_name())
     # Testting
-    '''
-    결국 이제 그 집이 허위광고 같은 리뷰들이 얼마나 있냐? 
-    -> 그 글 내에 얼마나 키워드 들이 포함되어있나? 
-    '''
-
-    # start_time = time.time()
-    # blog_reviews, reuslt_file_names = rp.data_raed()
-    # # for index, blog_review in enumerate(blog_reviews):
-    # blog_review, index = blog_reviews[0], 0
-    # df = pd.read_csv(blog_review)
-    # # df = df.head(100)
-    # # df['store_name'] = df['Title'].apply(lambda x: rp.extract_res_name(x))
-    # df['title_pos'] = df['Title'].apply(lambda x: rp.preprocessing(x, norm=True, stem=True))
-    # df['content_pos'] = df['Content'].apply(lambda x: rp.preprocessing(x, norm=True, stem=True))
-    # # 단어 중복 제거하면 안됌.
-    # # df = df[['store_name','title_pos','content_pos']]
-    # df = df[['title_pos','content_pos']]
-    # df.to_csv(RESULT_PATH+reuslt_file_names[index]+".csv")
-    # end_time = time.time()
-    # print(f"{reuslt_file_names[index]} 경과 시간: {(end_time - start_time):.2f} 초")
+    # rp.add_word_test()
